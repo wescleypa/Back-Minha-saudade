@@ -5,6 +5,8 @@ require('dotenv').config();
 
 class JwtService {
 
+  static tokenBlocklist = [];
+
   static save = async (userID, token, expiry, conn) => {
     const connection = conn || db;
 
@@ -39,8 +41,9 @@ class JwtService {
 
   static verifyTokenCache = async (token) => {
     try {
+      if (this.tokenBlocklist.includes(token)) return { valid: false, reason: 'Token expirado' };
       const decoded = jwt.verify(token, process.env.SECRET_JWT);
-
+      
       // Verifica se o token expirou
       const currentTime = Math.floor(Date.now() / 1000); // Tempo atual em segundos
       if (decoded.exp && decoded.exp < currentTime) {
@@ -49,6 +52,7 @@ class JwtService {
 
       return { valid: true, payload: decoded };
     } catch (error) {
+      console.error(error);
       // Diferencia os tipos de erro
       if (error.name === 'TokenExpiredError') {
         return { valid: false, reason: 'Token expirado' };
@@ -62,20 +66,26 @@ class JwtService {
 
   static verifyToken = async (token) => {
     try {
+      if (this.tokenBlocklist.includes(token)) throw new Error('Sessão expirada, faça login novamente.');
       const { valid, payload } = await this.verifyTokenCache(token);
+
       if (!valid || !payload?.userID) throw new Error('Sessão expirada, faça login novamente.');
 
       const sql = `SELECT id FROM session_tokens WHERE token = ? AND user = ? AND now() > expiry`;
       const result = await db.query(sql, [token, payload?.userID]);
 
-      if (result) return true;
+      if (result) return payload?.userID;
       else throw new Error('Sessão expirada, faça login novamente.');
     } catch (error) {
+      const sql = `DELETE FROM session_tokens WHERE token = ?`;
+      await db.query(sql, [token]);
       console.error(error);
       throw new Error('Sessão expirada, faça login novamente.');
     }
 
   };
+
+  static delete = async (token) => this.tokenBlocklist.push(token);
 };
 
 module.exports = JwtService;

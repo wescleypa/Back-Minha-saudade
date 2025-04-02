@@ -1,6 +1,7 @@
 const db = require('../config/mysql');
 const UserService = require('./user.service');
 const JwtService = require('./jwt.service');
+const crypto = require('crypto');
 require('dotenv').config();
 
 class AuthService {
@@ -26,6 +27,65 @@ class AuthService {
       throw error;
     }
   };
+
+  static async register(name, email, password) {
+    try {
+      return await db.executeTransaction(async (conn) => {
+        try {
+          const [result] = await conn.query(`INSERT INTO users (name, email, password) VALUES (?, ?, ?)`, [name, email, password]);
+          const userID = result.insertId;
+
+        } catch (error) {
+          throw error;
+        }
+      });
+    } catch (error) {
+      console.error('Login error:', error);
+      throw error;
+    }
+  };
+
+  static async generateCodeByMail(email) {
+    try {
+      const [user] = await db.query(`SELECT id FROM users WHERE email = ?`, [email]);
+      if (!user) throw new Error('Usuário não cadastrado.');
+      const userID = user?.id;
+
+      const code = crypto.randomInt(1000, 9999).toString();
+      const sql = `INSERT INTO verify_codes (user, code) VALUES (?, ?)`;
+
+      const result = await db.query(sql, [userID, code]);
+
+      if (result) return { status: true, code };
+      else throw new Error('Falha ao gerar solicitação.');
+    } catch (error) {
+      console.error('Code generate error:', error);
+      throw error;
+    }
+  };
+
+  static async verifyCodeRequest(email, code) {
+    try {
+      const sql = `
+        SELECT code.code, u.name, u.id, u.email FROM verify_codes code
+        LEFT JOIN users u ON code.user = u.id
+        WHERE u.email = ? AND code.code = ? AND code.expiry > NOW()
+      `;
+      const [result] = await db.query(sql, [email, code]);
+
+      if (!result) throw new Error('Código inválido ou expirado, solicite novamente.');
+
+      await db.query(`DELETE FROM verify_codes WHERE code=?`, [code])
+
+      return result;
+    } catch (error) {
+      console.error('Code verify error:', error);
+      throw error;
+    }
+  }
+
+
+
 }
 
 module.exports = AuthService;

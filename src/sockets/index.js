@@ -3,6 +3,9 @@ const chatHandler = require('./handlers/chat.handler');
 const AuthHandler = require('./handlers/auth.handler');
 const AuthService = require('../services/auth.service');
 const JwtService = require('../services/jwt.service');
+const UserService = require('../services/user.service');
+const ChatService = require('../services/chat.service');
+const EmailService = require('../services/email.service');
 
 function configureSockets(server) {
   const io = socketIO(server);
@@ -15,8 +18,8 @@ function configureSockets(server) {
     
     // Registrar handlers
     chatHandler.register(io, socket);
-    AuthHandler.register(io, socket, AuthService, JwtService);
-    
+    AuthHandler.register(io, socket, AuthService, JwtService, UserService, ChatService, EmailService);
+
     socket.on('disconnect', () => {
       console.log('Cliente desconectado:', socket.id);
     });
