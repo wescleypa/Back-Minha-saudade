@@ -1,9 +1,118 @@
 const db = require('../config/mysql');
-const Email = require('../controllers/email');
-const fs = require('fs').promises;
-const path = require('path');
+const UserService = require('./user.service');
+const JwtService = require('./jwt.service');
+require('dotenv').config();
 
 class AuthService {
+
+  static async login(userData) {
+    try {
+      return await db.executeTransaction(async (conn) => {
+        var user = await UserService.findByCredentials(
+          userData.email,
+          userData.password
+        );
+
+        if (!user) throw new Error('Falha ao realizar login');
+
+        const { token } = await JwtService.create(user, conn);
+
+        user = Object.assign({}, user, { token });
+
+        return user;
+      });
+    } catch (error) {
+      console.error('Login error:', error);
+      throw error;
+    }
+  };
+}
+
+module.exports = AuthService;
+
+/*
+class AuthService {
+
+  static enrichUserWithAdditionalData = async (user) => {
+    const [banner, pic] = await Promise.all([
+      this.getUserImage(user.id, 'banner'),
+      this.getUserImage(user.id, 'pic')
+    ]);
+
+    user.banner = banner;
+    user.pic = pic;
+  };
+
+  static getUserImage = async (userId, type) => {
+    const imagePath = path.join('./src/users', type, `${userId}.jpg`);
+    try {
+      return await this.imageToBase64Async(imagePath);
+    } catch (error) {
+      console.error(`Error loading ${type} image:`, error);
+      return null;
+    }
+  };
+
+  static processUserSkills = (user) => {
+    if (user.skills?.length > 0) {
+      user.skills = user.skills.split(',');
+    }
+    return user;
+  };
+
+  // Métodos auxiliares privados
+  static authenticateUser = async ({ email, password }) => {
+    const columns = USER_COLUMNS.map(col => `u.${col}`).join(', ');
+
+    const sql = `
+      SELECT ${columns}, GROUP_CONCAT(skill.skill) AS skills
+      FROM users u
+      LEFT JOIN verify_codes code ON code.user = u.id
+      LEFT JOIN user_skills skill ON skill.user = u.id
+      WHERE u.email = ? AND u.password = ?
+      GROUP BY u.id
+    `;
+
+    const [result] = await db.query(sql, [email, password]);
+    if (!result) return null;
+
+    return this.processUserSkills(result);
+  };
+
+  static login = async (userData) => {
+    const USER_COLUMNS = [
+      'id', 'name', 'email', 'title', 'bio', 'phone',
+      'location', 'birthday', 'twitter', 'linkedin',
+      'github', 'website', 'nPlataforma', 'nEmail', 'mCrud'
+    ];
+
+    try {
+      const user = await this.authenticateUser(userData);
+      if (!user) return null;
+
+      await this.enrichUserWithAdditionalData(user);
+      return user;
+
+    } catch (error) {
+      console.error('Login error:', error);
+      throw new Error('Falha no processo de login');
+    }
+  };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  /*
   static imageToBase64Async = async (filePath) => {
     try {
       try {
@@ -351,6 +460,8 @@ class AuthService {
       throw err;
     }
   };
-}
+
+  *
+}*/
 
 module.exports = AuthService;

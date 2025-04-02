@@ -5,8 +5,8 @@ const sockets = require('./src/routes/socket');
 const app = express();
 const server = http.createServer(app);
 const router = require('./src/routes/index');
-const io = socketIo(server);
 const cors = require('cors');
+const configureSockets = require('./src/sockets/index');
 
 // Middleware to parse JSON
 app.use(express.json());
@@ -19,7 +19,7 @@ app.use(cors({
 // Example route
 app.use(router);
 
-sockets(io);
+const io = configureSockets(server);
 
 // Start Server
 const PORT = 3000;
