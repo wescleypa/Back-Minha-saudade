@@ -3,7 +3,6 @@ const router = express.Router();
 const ia = require('./deekseek');
 const fs = require('fs').promises;
 const path = require('path');
-const AuthService = require('../services/auth.service');
 const JwtService = require('../services/jwt.service');
 
 // Define your routes here
