@@ -12,6 +12,7 @@ class AuthHandler {
       var user = await this.authService.login(data);
 
       if (!user) throw new Error('Falha ao verificar login');
+      socket.userToken = user?.token;
 
       const chats = await this.ChatService.getAllChats(user?.id);
 
@@ -36,6 +37,8 @@ class AuthHandler {
       const chats = await this.ChatService.getAllChats(userID);
       user['chats'] = chats || [];
 
+      socket.userToken = token?.token || token;
+
       callback({ status: 'success', data: user });
     } catch (err) {
       console.error(err);
@@ -48,7 +51,7 @@ class AuthHandler {
       if (!userMail && !userMail?.email) throw new Error('Invalid mail');
       const email = userMail || userMail?.email;
 
-      const { status, code } = await this.authService.generateCodeByMail(email);
+      const { status, code } = await this.authService.generateCodeByMail(email, 1);
       if (!status) throw new Error('Falha ao enviar código de verificação');
 
       await this.EmailService.send(email, code, 'Alteração de senha - Minha saudade');
@@ -67,8 +70,15 @@ class AuthHandler {
 
       const result = await this.authService.verifyCodeRequest(email, code);
       const token = await this.JwtService.create(result);
+      var user = {};
 
-      callback({ status: 'success', token });
+      if (result?.action === 0) {
+        user = await this.UserService.findByID(result?.id);
+        user['token'] = token?.token;
+        socket.userToken = token?.token;
+      }
+
+      callback({ status: 'success', data: { token: token?.token, action: result?.action, user } });
     } catch (err) {
       console.error(err);
       this.handleError(callback, err);
@@ -100,6 +110,7 @@ class AuthHandler {
 
       const chats = await this.ChatService.getAllChats(userID);
       user['chats'] = chats || [];
+      socket.userToken = tk?.token;
 
       callback({ status: 'success', data: user });
     } catch (err) {
@@ -114,7 +125,7 @@ class AuthHandler {
       const { name, email, password } = data;
       const userID = await this.authService.register(name, email, password);
 
-      const { status, code } = await this.authService.generateCodeByMail(email);
+      const { status, code } = await this.authService.generateCodeByMail(email, 0);
 
       if (!status) throw new Error('Falha ao gerar código de confirmação, tente novamente.');
       
@@ -132,8 +143,9 @@ class AuthHandler {
 
   handleError(callback, error) {
     var errorMessage = error;
-
     errorMessage = error?.message?.includes('Duplicate entry') ? 'Usuário já está registrado, utilize outro e-mail ou faça logn.' : errorMessage;
+    errorMessage = error?.message?.includes('não cadastrado') ? 'Usuário não encontrado, tem certeza que usou o e-mail correto ?' : errorMessage;
+    
     console.error('Auth error:', errorMessage);
     callback({
       status: 'error',

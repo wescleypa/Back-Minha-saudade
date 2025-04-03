@@ -45,21 +45,20 @@ class AuthService {
     }
   };
 
-  static async generateCodeByMail(email) {
+  static async generateCodeByMail(email, action=1) {
     try {
       const [user] = await db.query(`SELECT id FROM users WHERE email = ?`, [email]);
       if (!user) throw new Error('Usuário não cadastrado.');
       const userID = user?.id;
 
       const code = crypto.randomInt(1000, 9999).toString();
-      const sql = `INSERT INTO verify_codes (user, code) VALUES (?, ?)`;
+      const sql = `INSERT INTO verify_codes (user, code, action) VALUES (?, ?, ?)`;
 
-      const result = await db.query(sql, [userID, code]);
+      const result = await db.query(sql, [userID, code, action]);
 
       if (result) return { status: true, code };
       else throw new Error('Falha ao gerar solicitação.');
     } catch (error) {
-      console.error('Code generate error:', error);
       throw error;
     }
   };
@@ -67,7 +66,7 @@ class AuthService {
   static async verifyCodeRequest(email, code) {
     try {
       const sql = `
-        SELECT code.code, u.name, u.id, u.email FROM verify_codes code
+        SELECT code.code, code.action, u.name, u.id, u.email FROM verify_codes code
         LEFT JOIN users u ON code.user = u.id
         WHERE u.email = ? AND code.code = ? AND code.expiry > NOW()
       `;

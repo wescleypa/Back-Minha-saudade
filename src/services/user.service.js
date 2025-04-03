@@ -20,6 +20,7 @@ class UserService {
     `;
 
     const [user] = await db.query(sql, [email, password]);
+    
     if (!user) throw new Error('Dados inválidos ou usuário não cadastrado.');
 
     return this.processUser(user);
