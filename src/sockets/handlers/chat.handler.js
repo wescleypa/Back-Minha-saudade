@@ -1,13 +1,15 @@
 const JwtService = require('../../services/jwt.service');
 const db = require('../../config/mysql');
 const ChatService = require('../../services/chat.service');
+const UserService = require('../../services/user.service');
 
 function registerChatHandlers(io, socket) {
   socket.on('message:send', async (data, callback) => {
+    var permanentChatID = null;
     try {
       return await db.executeTransaction(async (conn) => {
-        var { input, chat, user, chatID } = data;
-        if (!socket?.userToken || !input || !chat || user?.token !== socket?.userToken) throw new Error('Invalid params.');
+        var { chatID, input } = data;
+        if (!socket?.userToken || !input) throw new Error('Invalid params.');
         const token = socket?.userToken;
 
         const { valid, payload } = await JwtService.verifyTokenCache(token);
@@ -16,11 +18,18 @@ function registerChatHandlers(io, socket) {
           throw new Error('Sessão inválida ou expirada, faça login novamente.');
         }
 
-        //Verifica se é um novo chat
+        const chat = await ChatService.getChatById(conn, chatID);
+        console.log(chat, payload);
+        if ((chat && chat?.length > 0) && chat[0]?.user !== payload?.userID) {
+          await socket.emit('logout');
+          throw new Error('Sessão inválida ou expirada, faça login novamente.');
+        }
+
+        const user = await UserService.findByID(payload?.userID);
+
         if (!chat || chat?.length <= 0) {
-          isNewChat = chatID;
-          const permanentChatID = await ChatService.create(conn, user, '');
-          const responseIA = await ChatService.send({ id: permanentChatID }, user, input);
+          permanentChatID = await ChatService.create(conn, user, '');
+          const responseIA = await ChatService.Send.user({ id: permanentChatID }, user, input);
 
           if (responseIA?.name) {
             await ChatService.update(conn, permanentChatID, 'name', responseIA?.name, user, []);
@@ -40,7 +49,7 @@ function registerChatHandlers(io, socket) {
           });
         }
 
-        const responseIA = await ChatService.send(chat, user, input);
+        const responseIA = await ChatService.Send.user(chat, user, input);
         if (responseIA?.shouldReply) {
           await Promise.all([
             ChatService.saveMessage(conn, chatID, input, 'user'),
@@ -49,7 +58,6 @@ function registerChatHandlers(io, socket) {
         }
 
         if (responseIA?.name) {
-          console.log('chat before ', chat);
           await ChatService.update(conn, chatID, 'name', responseIA?.name, user, chat);
         }
 
@@ -69,9 +77,9 @@ function registerChatHandlers(io, socket) {
       console.error(err?.message);
       return callback({
         status: 'error',
+        permanentChatID: permanentChatID || data?.chatID,
         error: err?.message ?? 'Erro desconhecido'
       });
-      //HANDLE ERRO WITH CALLBACK
     }
   });
 
@@ -103,6 +111,155 @@ function registerChatHandlers(io, socket) {
       console.error(err?.message);
       return callback({
         status: 'error',
+        error: err?.message ?? 'Erro desconhecido'
+      });
+    }
+  });
+
+  socket.on('chat:train:save', async (data, callback) => {
+    try {
+      const { chatID, pairId, userMessage, assistantMessage } = data;
+      if (!pairId || !userMessage || !assistantMessage || !chatID) throw new Error("Invalid params.");
+      if (!socket?.userToken) {
+        await socket.emit('logout');
+        throw new Error('Sessão inválida ou expirada, faça login novamente.');
+      }
+
+      const object = {
+        chatID,
+        user: userMessage,
+        assistant: assistantMessage
+      };
+
+      const id = await ChatService.Train.save(object);
+
+      return callback({
+        success: true,
+        status: 'success',
+        data: object,
+        tempID: pairId,
+        permanentID: id
+      });
+    } catch (err) {
+      console.error(err?.message);
+      return callback({
+        success: false,
+        status: 'error',
+        error: err?.message ?? 'Erro desconhecido'
+      });
+    }
+  });
+
+  socket.on('chat:train:update', async (data, callback) => {
+    try {
+      console.log(data)
+      const { chatID, pairId, userMessage, assistantMessage } = data;
+      if (!pairId || !userMessage || !assistantMessage || !chatID) throw new Error("Invalid params.");
+      if (!socket?.userToken) {
+        await socket.emit('logout');
+        throw new Error('Sessão inválida ou expirada, faça login novamente.');
+      }
+
+      const object = {
+        chatID,
+        pairId,
+        user: userMessage,
+        assistant: assistantMessage
+      };
+
+      await ChatService.Train.update(object);
+
+      return callback({
+        success: true,
+        status: 'success',
+        data: object
+      });
+    } catch (err) {
+      console.error(err?.message);
+      return callback({
+        success: false,
+        status: 'error',
+        error: err?.message ?? 'Erro desconhecido'
+      });
+    }
+  });
+
+  socket.on('chat:train:delete', async (data, callback) => {
+    try {
+      const { pairId } = data;
+      if (!pairId) throw new Error("Invalid params.");
+      if (!socket?.userToken) {
+        await socket.emit('logout');
+        throw new Error('Sessão inválida ou expirada, faça login novamente.');
+      }
+
+      await ChatService.Train.delete(pairId);
+
+      return callback({
+        success: true,
+        status: 'success',
+        data: {}
+      });
+    } catch (err) {
+      console.error(err?.message);
+      return callback({
+        success: false,
+        status: 'error',
+        error: err?.message ?? 'Erro desconhecido'
+      });
+    }
+  });
+
+  socket.on('message:empty:send', async (data, callback) => {
+    try {
+      const { message, pairId } = data;
+      if (!message) throw new Error("Invalid params.");
+      if (!pairId) throw new Error("Invalid params.");
+
+      const responseIA = await ChatService.Send.empty(message, socket.id);
+
+      return callback({
+        success: true,
+        message: responseIA?.reply,
+        pairId: message?.id,
+        shouldReply: responseIA?.shouldReply
+      });
+    } catch (err) {
+      console.error(err);
+      return callback({
+        success: false,
+        error: err?.message ?? 'Erro desconhecido'
+      });
+    }
+  });
+
+  socket.on('message:empty:like', async (data, callback) => {
+    try {
+      const { user, assistant } = data;
+      if (!user) throw new Error("Invalid params.");
+      if (!assistant) throw new Error("Invalid params.");
+
+      return callback({ success: true });
+    } catch (err) {
+      console.error(err);
+      return callback({
+        success: false,
+        error: err?.message ?? 'Erro desconhecido'
+      });
+    }
+  });
+
+  socket.on('message:empty:unlike', async (data, callback) => {
+    try {
+      const { user, assistant } = data;
+      if (!user) throw new Error("Invalid params.");
+      if (!assistant) throw new Error("Invalid params.");
+
+      return callback({ success: true });
+    } catch (err) {
+      console.error(err);
+      return callback({
+        success: false,
         error: err?.message ?? 'Erro desconhecido'
       });
     }

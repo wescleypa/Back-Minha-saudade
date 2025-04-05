@@ -2,6 +2,7 @@ const db = require('../config/mysql');
 const Config = require('../config/deepseek');
 const ImageService = require('./image.service');
 const { GoogleGenAI, Type } = require('@google/genai');
+const { FormData } = require('openai/_shims/web-types.mjs');
 const ai = new GoogleGenAI({
   apiKey: process.env.AI_KEY || "MY KEY"
 });
@@ -49,21 +50,108 @@ class ChatService {
     ORDER BY id DESC`;
 
     var result = await db.query(sql, [userID]);
-   
+
+    return result;
+  };
+
+  static getChatById = async (conn, chatID) => {
+    const connection = conn || db;
+    if (!chatID) throw new Error('Invalid params');
+
+    const sql = `
+    SELECT 
+  chat.id AS id,
+  chat.*,
+  ${this.columnsConfig.join(',')},
+  CASE 
+    WHEN (
+      SELECT COUNT(*) 
+      FROM chat_messages 
+      WHERE chat_messages.chat = chat.id
+    ) = 0 THEN JSON_ARRAY()
+    ELSE (
+      SELECT JSON_ARRAYAGG(
+        JSON_OBJECT(
+          'id', chat_messages.id, 
+          'text', chat_messages.message, 
+          'sender', chat_messages.from, 
+          'timestamp', chat_messages.created
+        )
+      )
+      FROM chat_messages
+      WHERE chat_messages.chat = chat.id
+      ORDER BY chat_messages.id DESC
+    )
+  END AS messages
+FROM chats chat
+LEFT JOIN chat_config config ON config.chat = chat.id
+WHERE chat.id = ?
+GROUP BY chat.id
+ORDER BY id DESC`;
+
+    var [result] = await connection.query(sql, [chatID]);
+
     return result;
   };
 
   static activeChats = {};
-  static configure = async (chatID, userData, chat = []) => {
-    console.log('chat config ', chat);
-    try {
-      if (!this.activeChats[chatID]) {
-        
-        this.activeChats[chatID] = ai.chats.create({
+  static configure = {
+    user: async (chatID, userData, chat = []) => {
+      try {
+
+        if (!this.activeChats[chatID]) {
+          this.activeChats[chatID] = ai.chats.create({
+            model: "gemini-2.0-flash",
+            //history: this._formatHistory(history) //histórico de importação
+            config: {
+              systemInstruction: Config.initialMessage.user(chat[0]?.messages || [], userData?.name, chat),
+              maxOutputTokens: 300,
+              temperature: 0.7,
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  'shouldReply': {
+                    type: Type.BOOLEAN,
+                    description: 'Enviar resposta ?',
+                    nullable: false,
+                  },
+                  'reply': {
+                    type: Type.STRING,
+                    description: 'Sua resposta',
+                    nullable: false,
+                  },
+                  'reason': {
+                    type: Type.STRING,
+                    description: 'Motivo de não enviar a resposta',
+                    nullable: true,
+                  },
+                  'name': {
+                    type: Type.STRING,
+                    description: "Se identificar o nome da 'saudade' do usuário, retorne o nome para salvar no bd, mas retorne apenas na msg atual, assim evita retornar toda hora.",
+                    nullable: true
+                  }
+                },
+                required: ['shouldReply', 'reply'],
+
+              },
+            }
+          });
+        }
+
+        return this.activeChats[chatID];
+      } catch (error) {
+        console.error(error);
+        throw new Error('Falha ao configurar chat, tente novamente ou contate o suporte.');
+      }
+    },
+
+    empty: async (socketID) => {
+      if (!this.activeChats[socketID]) {
+        this.activeChats[socketID] = ai.chats.create({
           model: "gemini-2.0-flash",
-          //history: this._formatHistory(history) //histórico de importação
           config: {
-            systemInstruction: Config.initialMessage(chat?.messages || [], userData?.name, chat),
+            systemInstruction: Config.initialMessage.empty(),
             maxOutputTokens: 300,
             temperature: 0.7,
             responseMimeType: 'application/json',
@@ -84,11 +172,6 @@ class ChatService {
                   type: Type.STRING,
                   description: 'Motivo de não enviar a resposta',
                   nullable: true,
-                },
-                'name': {
-                  type: Type.STRING,
-                  description: "Se identificar o nome da 'saudade' do usuário, retorne o nome para salvar no bd, mas retorne apenas na msg atual, assim evita retornar toda hora.",
-                  nullable: true
                 }
               },
               required: ['shouldReply', 'reply'],
@@ -98,18 +181,15 @@ class ChatService {
         });
       }
 
-      return this.activeChats[chatID];
-    } catch (error) {
-      console.error(error);
-      throw new Error('Falha ao configurar chat, tente novamente ou contate o suporte.');
+      return this.activeChats[socketID];
     }
-  };
+  }
 
   static create = async (conn, userData, name) => {
     try {
       const connection = conn || db;
-      const [result] = await connection.query('INSERT INTO chats (user, name) VALUES (?, ?)', [userData?.id, name]);
-      await this.configure(result?.insertId, userData);
+      const [result] = await connection.query('INSERT INTO chats (user, name, viewed) VALUES (?, ?, 1)', [userData?.id, name]);
+      await this.configure.user(result?.insertId, userData);
 
       return result?.insertId;
     } catch (error) {
@@ -118,19 +198,28 @@ class ChatService {
     }
   };
 
-  static send = async (chatData, userData, input) => {
-    try {
-      const chat = await this.configure(chatData?.id, userData, chatData);
+  static Send = {
+    user: async (chatData, userData, input) => {
+      try {
+        const chat = await this.configure.user(chatData?.id, userData, chatData);
 
-      const result = await chat.sendMessage({ message: input });
+        const result = await chat.sendMessage({ message: input });
+        const parsedResponse = JSON.parse(result?.text);
+
+        return parsedResponse;
+      } catch (err) {
+        console.error(err);
+        throw new Error('Falha ao enviar mensagem para IA, tente novamente ou contate o suporte.');
+      }
+    },
+
+    empty: async (message, socketID) => {
+      const chat = await this.configure.empty(socketID);
+      const result = await chat.sendMessage({ message });
       const parsedResponse = JSON.parse(result?.text);
-
       return parsedResponse;
-    } catch (err) {
-      console.error(err);
-      throw new Error('Falha ao enviar mensagem para IA, tente novamente ou contate o suporte.');
     }
-  };
+  }
 
   static saveMessage = async (conn, chatID, message, role) => {
     try {
@@ -151,9 +240,9 @@ class ChatService {
       const sql = `UPDATE chats SET ${column} = ? WHERE id = ?`;
 
       const result = await connection.query(sql, [value, chatID]);
-     
+
       delete this.activeChats[chatID];
-      await this.configure(chatID, userData, chatData);
+      await this.configure.user(chatID, userData, chatData);
 
       return result;
     } catch (err) {
@@ -175,7 +264,7 @@ class ChatService {
       const result = await connection.query(sql, [chatID, valUse, valUse]);
 
       delete await this.activeChats[chatID];
-      await this.configure(chatID, userData, chatData);
+      await this.configure.user(chatID, userData, chatData);
 
       return result;
     } catch (err) {
@@ -188,13 +277,57 @@ class ChatService {
     try {
       await ImageService.uploadImage(chatID, './src/chats/pic', value);
       delete await this.activeChats[chatID];
-      await this.configure(chatID, userData, chatData);
+      await this.configure.user(chatID, userData, chatData);
       return true;
     } catch (err) {
       console.error(err);
       throw new Error('Falha ao atualizar chat, atualize a página ou contate o suporte.');
     }
   };
+
+  static changeView = async (chatID, value = 1) => {
+    try {
+      const sql = `UPDATE chats SET viewed = ? WHERE id = ?`;
+      const result = await db.query(sql, [value, chatID]);
+      return result;
+    } catch (err) {
+      console.error(err);
+      throw new Error('Falha ao atualizar chat, atualize a página ou contate o suporte.');
+    }
+  };
+
+  static Train = {
+    save: async (data) => {
+      const { chatID, user, assistant } = data;
+
+      const result = await db.query(
+        'INSERT INTO chat_train (chat, user, assistant) VALUES (?, ?, ?)',
+        [chatID, user, assistant]
+      );
+
+      return result?.insertId;
+    },
+
+    update: async (data) => {
+      const { pairId, user, assistant } = data;
+
+      await db.query(
+        'UPDATE chat_train SET user = ?, assistant = ? WHERE id = ?',
+        [user, assistant, pairId]
+      );
+
+      return { success: true };
+    },
+
+    delete: async (pairId) => {
+      await db.query('DELETE FROM chat_train WHERE id = ?', [pairId]);
+      return { success: true };
+    }
+  };
+
+  static deleteChat = {
+    empty: (socketID) => delete this.activeChats[socketID],
+  }
 };
 
 module.exports = ChatService;

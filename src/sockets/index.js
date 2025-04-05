@@ -43,6 +43,8 @@ function configureSockets(server) {
 
     socket.on('disconnect', () => {
       console.log('Cliente desconectado:', socket.id);
+
+      ChatService.deleteChat.empty(socket.id);
     });
   });
 

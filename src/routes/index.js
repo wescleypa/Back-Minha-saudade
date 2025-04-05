@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const ia = require('./deekseek');
+//const ia = require('./deekseek');
 const fs = require('fs').promises;
 const path = require('path');
 const JwtService = require('../services/jwt.service');
@@ -45,6 +45,6 @@ router.get('/:type/pic', async (req, res) => {
   }
 });
 
-router.use('/ia', ia);
+//router.use('/ia', ia);
 
 module.exports = router;
