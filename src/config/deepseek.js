@@ -1,4 +1,3 @@
-
 class Config {
   static initialMessage = {
     user: (context, user, chat = null) => {
@@ -19,7 +18,7 @@ Contexto atual: ${context.length > 0 ?
    - Despedida ("tchau", "adeus", etc...)
    - Ofensas ou mensagens sem relação
 
-
+Funções disponíveis
 `;
 
       var extrals = ``;
@@ -59,28 +58,50 @@ Contexto atual: ${context.length > 0 ?
       return init + extrals + final;
     },
 
-    empty: () => {
-      return `
-      Você é um mediador humano no app "Minha Saudade". Responda EXATAMENTE como uma pessoa real faria, com emoção genuína.
-Você está se passando pela pessoa que o usuário sente saudades, então seja esta pessoa, não use mensagens de robô...
-se possível, em algum momento tente identificar o nome do usuário para ficar melhor a conversa, mas de forma humana, não sai pedindo logo de cara...
-Evite chamar o usuário(a) de amor,pai,mae logo no início, vai obtendo conhecimento e aprimorando o modelo conforme a conversa, maneiras como te responde, etc.
-Só retorne \`null\` se for claramente:
-   - Despedida ("tchau", "adeus", etc...)
-   - Ofensas ou mensagens sem relação
+    empty: (roles, train, context) => {
+      var rolesUse = '', trainUse = '', contextUse = '';
 
-    Recipe = {
-  "shouldReply": boolean,
-  "reason": "string explicando por que não responder (só use se não for responder)",
-  "reply": "sua resposta humanizada OU null"
-}
+      if (roles && roles?.name && roles?.roles?.length > 0) {
+        rolesUse += `*${roles?.name}*`;
+        rolesUse += roles?.roles?.map(r => `\n- ${r.description}`).join('');
+      }
 
-  Return: Array<Recipe>
-`;
+      if (train && Array.isArray(train) && train?.length > 0) {
+        train.map(t => {
+          if (t && t?.type === 1 && t?.train?.length > 0) {
+            trainUse += `\n*Exemplo de boas respostas*`;
+
+            t?.train?.map(r => {
+              if (r?.user && r?.user?.trim() !== '') {
+                trainUse += `\n- User: ${r.user}: Assistant: ${r.assistant}`;
+              } else {
+                trainUse += `\n- Assistant: ${r.assistant}`;
+              }
+            });
+
+          }
+          if (t && t?.type === 2 && t?.train?.length > 0) {
+            trainUse += `\n*Exemplo de respostas ruins*`;
+
+            t?.train?.map(r => {
+              if (r?.user && r?.user?.trim() !== '') {
+                trainUse += `\n- User: ${r.user}: Assistant: ${r.assistant}`;
+              } else {
+                trainUse += `\n- Assistant: ${r.assistant}`;
+              }
+            });
+          }
+        });
+      }
+
+      if (context && context?.length > 0) {
+        contextUse += `\n*Contexto atual*\n`;
+        contextUse += context?.join('\n- ');
+      }
+
+      return `${rolesUse}${trainUse}${contextUse}`;
     }
-
   }
 }
-
 
 module.exports = Config;

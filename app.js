@@ -6,6 +6,8 @@ const server = http.createServer(app);
 const router = require('./src/routes/index');
 const cors = require('cors');
 const configureSockets = require('./src/sockets/index');
+const Config = require('./src/services/config.service');
+const ChatService = require('./src/services/chat.service');
 
 // Middleware to parse JSON
 app.use(express.json());
@@ -22,6 +24,12 @@ const io = configureSockets(server);
 
 // Start Server
 const PORT = 3000;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
+  const roles = await Config.roles.get();
+  const train = await Config.train.get();
+
+  await ChatService.configureRoles(roles);
+  await ChatService.configureTrain(train);
+
   console.log(`Server is running on http://localhost:${PORT}`);
 });

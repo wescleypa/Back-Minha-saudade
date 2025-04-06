@@ -1,13 +1,20 @@
 const db = require('../config/mysql');
 const Config = require('../config/deepseek');
+const ConfigApp = require('./config.service');
 const ImageService = require('./image.service');
 const { GoogleGenAI, Type } = require('@google/genai');
-const { FormData } = require('openai/_shims/web-types.mjs');
+const { getTrain, ignoreMessage } = require('../utils/functions.chat');
 const ai = new GoogleGenAI({
   apiKey: process.env.AI_KEY || "MY KEY"
 });
 
+var roles = [];
+var train = [];
+
 class ChatService {
+  static configureRoles = (r) => roles = r;
+  static configureTrain = (t) => train = t;
+
   static columnsConfig = [
     'config.role',
     'config.bio',
@@ -39,7 +46,7 @@ class ChatService {
       CASE 
         WHEN COUNT(message.id) = 0 THEN JSON_ARRAY()
         ELSE JSON_ARRAYAGG(
-          JSON_OBJECT('id', message.id, 'text', message.message, 'sender', message.from, 'timestamp', message.created)
+          JSON_OBJECT('id', message.id, 'text', message.message, 'sender', message.from, 'time', message.created)
         )
       END AS messages
     FROM chats chat
@@ -146,37 +153,22 @@ ORDER BY id DESC`;
       }
     },
 
-    empty: async (socketID) => {
+    empty: async (socketID, context, aditional = null) => {
       if (!this.activeChats[socketID]) {
         this.activeChats[socketID] = ai.chats.create({
           model: "gemini-2.0-flash",
           config: {
-            systemInstruction: Config.initialMessage.empty(),
+            systemInstruction: `${Config.initialMessage.empty(roles, train, context)}\n\n${aditional}`,
             maxOutputTokens: 300,
             temperature: 0.7,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                'shouldReply': {
-                  type: Type.BOOLEAN,
-                  description: 'Enviar resposta ?',
-                  nullable: false,
-                },
-                'reply': {
-                  type: Type.STRING,
-                  description: 'Sua resposta',
-                  nullable: false,
-                },
-                'reason': {
-                  type: Type.STRING,
-                  description: 'Motivo de não enviar a resposta',
-                  nullable: true,
-                }
-              },
-              required: ['shouldReply', 'reply'],
-
-            },
+            tools: [{
+              functionDeclarations: [getTrain, ignoreMessage]
+            }],
+            toolConfig: {
+              functionCallingConfig: {
+                mode: 'AUTO'
+              }
+            }
           }
         });
       }
@@ -213,11 +205,37 @@ ORDER BY id DESC`;
       }
     },
 
-    empty: async (message, socketID) => {
-      const chat = await this.configure.empty(socketID);
-      const result = await chat.sendMessage({ message });
-      const parsedResponse = JSON.parse(result?.text);
-      return parsedResponse;
+    empty: async (message, socketID, context = []) => {
+      var chat = await this.configure.empty(socketID, this.formatContext(context));
+      var response = await chat.sendMessage({ message });
+
+      if (response.functionCalls && response.functionCalls.length > 0) {
+        const functionCall = response.functionCalls[0]; // Assuming one function call
+
+        if (functionCall?.name === 'get_train') {
+          const train = await ConfigApp.train.get(functionCall?.args?.limit);
+          this.deleteChat.empty(socketID);
+          chat = await this.configure.empty(
+            socketID, this.formatContext(context),
+            `Você solicitou treinamento, aqui está o resultado: \n ${train}\n\n msg anterior do usuário a seguir.`
+          );
+
+          response = await chat.sendMessage({ message });
+          console.log(response);
+
+          return response;
+        }
+
+        console.log(`Function to call: ${functionCall.name}`);
+        console.log(`Arguments: ${JSON.stringify(functionCall.args)}`);
+        // In a real app, you would call your actual function here:
+        // const result = await scheduleMeeting(functionCall.args);
+      } else {
+        console.log("No function call found in the response.");
+        console.log(response.text);
+
+        return response;
+      }
     }
   }
 
@@ -297,15 +315,25 @@ ORDER BY id DESC`;
   };
 
   static Train = {
-    save: async (data) => {
-      const { chatID, user, assistant } = data;
+    save: {
+      user: async (data) => {
+        const { chatID, user, assistant } = data;
 
-      const result = await db.query(
-        'INSERT INTO chat_train (chat, user, assistant) VALUES (?, ?, ?)',
-        [chatID, user, assistant]
-      );
+        const result = await db.query(
+          'INSERT INTO chat_train (chat, user, assistant) VALUES (?, ?, ?)',
+          [chatID, user, assistant]
+        );
 
-      return result?.insertId;
+        return result?.insertId;
+      },
+      empty: async (user, assistant, type) => {
+        const result = await db.query(
+          'INSERT INTO geral_train (user, assistant, type) VALUES (?, ?, ?)',
+          [user, assistant, type]
+        );
+
+        return result;
+      }
     },
 
     update: async (data) => {
@@ -328,6 +356,35 @@ ORDER BY id DESC`;
   static deleteChat = {
     empty: (socketID) => delete this.activeChats[socketID],
   }
+
+  static formatContext = (context = []) => {
+    if (!context || context.length === 0) return [];
+
+    const formatted = [];
+    const pendingUserMessages = [];
+
+    for (const msg of context) {
+      if (msg.sender === 'user') {
+        // Armazena mensagens do usuário em uma fila
+        pendingUserMessages.push(msg.text);
+      }
+      else if (msg.sender === 'assistant') {
+        // Pega a última mensagem do usuário não respondida (se existir)
+        const lastUserMsg = pendingUserMessages.pop();
+
+        formatted.push(
+          `User: ${lastUserMsg || "(sem contexto)"} | Assistant: ${msg.text}`
+        );
+      }
+    }
+
+    // Adiciona mensagens do usuário sem resposta
+    pendingUserMessages.forEach(userMsg => {
+      formatted.push(`User: ${userMsg} | Assistant: (sem resposta)`);
+    });
+
+    return formatted;
+  };
 };
 
 module.exports = ChatService;

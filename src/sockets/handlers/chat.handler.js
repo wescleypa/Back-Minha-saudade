@@ -131,7 +131,7 @@ function registerChatHandlers(io, socket) {
         assistant: assistantMessage
       };
 
-      const id = await ChatService.Train.save(object);
+      const id = await ChatService.Train.save.user(object);
 
       return callback({
         success: true,
@@ -212,17 +212,16 @@ function registerChatHandlers(io, socket) {
 
   socket.on('message:empty:send', async (data, callback) => {
     try {
-      const { message, pairId } = data;
+      const { message, pairId, context } = data;
       if (!message) throw new Error("Invalid params.");
       if (!pairId) throw new Error("Invalid params.");
 
-      const responseIA = await ChatService.Send.empty(message, socket.id);
+      const responseIA = await ChatService.Send.empty(message, socket.id, context ?? []);
 
       return callback({
         success: true,
-        message: responseIA?.reply,
-        pairId: message?.id,
-        shouldReply: responseIA?.shouldReply
+        message: responseIA?.text,
+        pairId: message?.id
       });
     } catch (err) {
       console.error(err);
@@ -239,6 +238,8 @@ function registerChatHandlers(io, socket) {
       if (!user) throw new Error("Invalid params.");
       if (!assistant) throw new Error("Invalid params.");
 
+      await ChatService.Train.save.empty(user, assistant, 1);
+
       return callback({ success: true });
     } catch (err) {
       console.error(err);
@@ -254,6 +255,8 @@ function registerChatHandlers(io, socket) {
       const { user, assistant } = data;
       if (!user) throw new Error("Invalid params.");
       if (!assistant) throw new Error("Invalid params.");
+
+      await ChatService.Train.save.empty(user, assistant, 2);
 
       return callback({ success: true });
     } catch (err) {
