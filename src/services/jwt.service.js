@@ -67,14 +67,11 @@ class JwtService {
   static verifyToken = async (token) => {
     try {
       if (this.tokenBlocklist.includes(token)) throw new Error('Sessão expirada, faça login novamente.');
-      const { valid, payload } = await this.verifyTokenCache(token);
-
-      if (!valid || !payload?.userID) throw new Error('Sessão expirada, faça login novamente.');
-
+      const session = await this.verifyTokenCache(token);
       const sql = `SELECT id FROM session_tokens WHERE token = ? AND user = ? AND now() > expiry`;
-      const result = await db.query(sql, [token, payload?.userID]);
-
-      if (result) return payload?.userID;
+      const result = await db.query(sql, [token, session?.payload?.userID]);
+      
+      if (result) return session;
       else throw new Error('Sessão expirada, faça login novamente.');
     } catch (error) {
       const sql = `DELETE FROM session_tokens WHERE token = ?`;

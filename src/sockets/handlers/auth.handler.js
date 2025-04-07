@@ -26,15 +26,16 @@ class AuthHandler {
 
   async verifyToken(socket, token, callback) {
     try {
-      const userID = await this.JwtService.verifyToken(token?.token ?? token);
+      const { valid, payload } = await this.JwtService.verifyToken(token?.token ?? token);
+      if (!valid) throw new Error('Sessão inválida ou expirada, faça login novamente.');
 
-      var user = await this.UserService.findByID(userID);
+      var user = await this.UserService.findByID(payload?.userID);
 
       if (!user) throw new Error('Falha ao verificar sessão');
 
       user = Object.assign({}, user, { token: token?.token ?? token });
 
-      const chats = await this.ChatService.getAllChats(userID);
+      const chats = await this.ChatService.getAllChats(payload?.userID);
       user['chats'] = chats || [];
 
       socket.userToken = token?.token || token;
@@ -142,7 +143,7 @@ class AuthHandler {
 
 
   handleError(callback, error) {
-    var errorMessage = error;
+    var errorMessage = error?.message ?? error;
     errorMessage = error?.message?.includes('Duplicate entry') ? 'Usuário já está registrado, utilize outro e-mail ou faça logn.' : errorMessage;
     errorMessage = error?.message?.includes('não cadastrado') ? 'Usuário não encontrado, tem certeza que usou o e-mail correto ?' : errorMessage;
     

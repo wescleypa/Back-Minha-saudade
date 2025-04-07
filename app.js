@@ -8,6 +8,7 @@ const cors = require('cors');
 const configureSockets = require('./src/sockets/index');
 const Config = require('./src/services/config.service');
 const ChatService = require('./src/services/chat.service');
+const WPP = require('./src/controllers/wppController');
 
 // Middleware to parse JSON
 app.use(express.json());
@@ -30,6 +31,9 @@ server.listen(PORT, async () => {
 
   await ChatService.configureRoles(roles);
   await ChatService.configureTrain(train);
+
+  await WPP.start();
+  WPP.SetIO(io);
 
   console.log(`Server is running on http://localhost:${PORT}`);
 });
